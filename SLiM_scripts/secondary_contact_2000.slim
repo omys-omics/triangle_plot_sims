@@ -1,0 +1,220 @@
+initialize() {
+	defineConstant("K", 1100);   // carrying capacity per subpop
+	defineConstant("N", 21);     // number of subpopulations
+	defineConstant("R", 1.04);   // mean reproduction (as first parent)
+	defineConstant("L", c(0.0, 1.0));		// probability of mortality at each age
+	defineConstant("BP", 2000000);
+	defineGlobal("genSinceContact", -1);
+	
+	initializeSLiMModelType("nonWF");
+	initializeMutationType("m5", 0.5, "f", 0.0);		//always neutral
+	initializeMutationType("m9", 0.5, "f", 0.0);		// mutations that exist at the end of initial mixing are converted to this
+	
+	m5.convertToSubstitution = F;
+	m9.convertToSubstitution = F;
+	m5.color = "yellow";
+	m9.color = "burlywood2";
+	
+	
+	initializeMutationRate(1e-7);		  // default is 1e-7
+	initializeRecombinationRate(1e-5); // default is 1e-8
+	
+	initializeGenomicElementType("g1", c(m5), c(1));  // noncoding
+	initializeGenomicElement(g1, 0, BP);
+}
+
+
+
+reproduction() {
+	// individuals reproduce locally, without dispersal
+	if (individual.age >= 0) {
+		litterSize = rpois(1, R);
+	}
+	
+	for (i in seqLen(litterSize))
+	{
+		// generate each offspring with an independently drawn mate
+		mate = subpop.sampleIndividuals(1, exclude=individual);
+		if (mate.size())
+			subpop.addCrossed(individual, mate);
+	}
+}
+
+1 early() {
+	// create an initial population of 100 individuals, the rest empty
+	for (i in seqLen(N))
+		sim.addSubpop(i, (i == 0 | i == 20) ? 100 else 0);
+}
+
+
+
+1:1000 early () {
+	// pre-plan migration of individuals to adjacent subpops
+	inds = sim.subpopulations.individuals;
+	numMigrants = rbinom(1, inds.size(), 0.2);
+	
+	if (numMigrants)
+	{
+		migrants = sample(inds, numMigrants);
+		currentSubpopID = migrants.subpopulation.id;
+		newSubpopID = ifelse(currentSubpopID==0, 20, 0);
+		
+		// do the pre-planned moves into each subpop in bulk
+		for (subpop in sim.subpopulations)
+			subpop.takeMigrants(migrants[newSubpopID == subpop.id]);
+	}
+}
+
+1000 late () {
+	
+	// convert all existing mutations to type m9 to track shared ancestral variation
+	sim.mutations.setMutationType(m9);
+
+}
+
+
+3000:40000 early () {
+	// pre-plan migration of individuals to adjacent subpops
+	inds = sim.subpopulations.individuals;
+	migrants = c();
+	newSubpopID = c();
+	numMigrants = 10;
+	
+	// Move exactly 5 individuals of age 0 in each direction every generation
+	
+	displacement = c(rep(-1, asInteger(numMigrants/2)), rep(1, asInteger(numMigrants/2)));
+	for (subpop in unique(inds.subpopulation)) {
+		// randomly choose 10 individuals of age 0
+		migrantChoices = inds[inds.subpopulation.id == subpop.id & inds.age == 0];
+		
+		// concatenate vector of migrants from each subpopulation
+		if (length(migrantChoices) > 200) {
+			subpopMigrants = sample(migrantChoices, numMigrants);
+			// get the current subpop id, subtract 1 for the first 2 and add 1 for the second 2
+			currentSubpopID = subpopMigrants.subpopulation.id;
+			new = currentSubpopID + displacement;
+			
+			migrants = c(migrants, subpopMigrants);
+			newSubpopID = c(newSubpopID, new);
+		}
+	}
+	// don't move 0 to -1 or 20 to 21		
+	actuallyMoving = (newSubpopID >= 0) & (newSubpopID < N);
+	
+	// don't move to 10 unless coming from both directions
+	if (sum(newSubpopID == 10) != numMigrants) {
+		actuallyMoving = (newSubpopID >= 0) & (newSubpopID < N) & (newSubpopID != 10);
+	}
+	
+	migrants = migrants[actuallyMoving];
+	newSubpopID = newSubpopID[actuallyMoving];
+	// do the pre-planned moves into each subpop in bulk
+	for (subpop in sim.subpopulations) {
+		subpop.takeMigrants(migrants[newSubpopID == subpop.id]);
+	}
+
+
+}
+
+
+
+3000 early() {
+	
+	// output all parental individuals at end of divergence
+	genomesample = object();
+	numParentals = c();
+	for (subpop in c(p0, p20)) {
+		numInds = length(subpop.individuals);
+		pXgenomes = sample(subpop.individuals, numInds, replace = F).genomes;
+		genomesample = c(genomesample, pXgenomes);
+		numParentals = c(numParentals, numInds);
+	}
+	genomesample.outputVCF(filePath = "C:/Users/bwien/Documents/Ben's Stuff/0 KU/Dissertation/Simulations/Triangle_Plots_best_practices/D2000/D2000.end.of.div.vcf", outputMultiallelics = F, append = T);
+	
+	// output number of parentals in each pop at this time
+	writeFile("C:/Users/bwien/Documents/Ben's Stuff/0 KU/Dissertation/Simulations/Triangle_Plots_best_practices/D2000/D2000.num.parentals.end.of.div.txt", "p0 p20", append = F);
+	writeFile("C:/Users/bwien/Documents/Ben's Stuff/0 KU/Dissertation/Simulations/Triangle_Plots_best_practices/D2000/D2000.num.parentals.end.of.div.txt", paste(numParentals), append = T);
+	
+	
+	// calculate FST between samples of parental pops
+	catn(calcFST(genomesample[0:((numParentals[0]*2)-1)], genomesample[(numParentals[0]*2):(((numParentals[0]+numParentals[1])*2)-1)]));
+
+}
+
+
+
+
+early () {
+	// life table based individual mortality
+	inds = sim.subpopulations.individuals;
+	ages = inds.age;
+	mortality = L[ages];
+	survival = 1 - mortality;
+	inds.fitnessScaling = survival;
+	//	inds.fitnessScaling = inds.fitnessScaling * survival;
+	
+	// post-migration density-dependent selection on each subpop
+	for (subpop in sim.subpopulations) {
+		if (subpop.individualCount > K) {
+			subpop.fitnessScaling = K / subpop.individualCount; 			//regular density dependence based on subpop
+		}
+	}
+}
+
+
+
+3000:40000 early () {
+	sizes = c();
+	if (genSinceContact == -1) {
+		for (s in sim.subpopulations) {
+			if (s.individualCount > 50) {
+				sizes = c(sizes, s.individualCount);
+			}
+		}
+	}
+	contact = ifelse(length(sizes) >= 21, T, F); // if 21 of the 21 subpops have > 50 individuals, then contact is true
+	if (genSinceContact != -1) {
+		contact = T;
+	}
+	if (contact == T) {
+		genSinceContact = genSinceContact + 1;
+	}
+	
+	if (genSinceContact == 0) {
+		// output all parental individuals at beginning of contact
+		genomesample = object();
+		numParentals = c();
+		for (subpop in c(p0, p20)) {
+			numInds = length(subpop.individuals);
+			pXgenomes = sample(subpop.individuals, numInds, replace = F).genomes;
+			genomesample = c(genomesample, pXgenomes);
+			numParentals = c(numParentals, numInds);
+		}
+		genomesample.outputVCF(filePath = "C:/Users/bwien/Documents/Ben's Stuff/0 KU/Dissertation/Simulations/Triangle_Plots_best_practices/D2000/D2000.beg.of.con.vcf", outputMultiallelics = F, append = T);
+		
+		// output number of parentals in each pop at this time
+		writeFile("C:/Users/bwien/Documents/Ben's Stuff/0 KU/Dissertation/Simulations/Triangle_Plots_best_practices/D2000/D2000.num.parentals.beg.of.con.txt", "p0 p20", append = F);
+		writeFile("C:/Users/bwien/Documents/Ben's Stuff/0 KU/Dissertation/Simulations/Triangle_Plots_best_practices/D2000/D2000.num.parentals.beg.of.con.txt", paste(numParentals), append = T);
+	
+	}
+	
+	if (genSinceContact % 200 == 0.0) {
+		genomesample = object();
+		for (subpop in sim.subpopulations) {
+			if (size(subpop.individuals) >= 20) {
+				pXgenomes = sample(subpop.individuals, 20, replace = F).genomes;
+				genomesample = c(genomesample, pXgenomes);
+			}
+		}
+		genomesample.outputVCF(filePath = "C:/Users/bwien/Documents/Ben's Stuff/0 KU/Dissertation/Simulations/Triangle_Plots_best_practices/D2000/D2000.vcf", outputMultiallelics = F, append = T);
+		log = sim.createLogFile("D2000.logfile.txt", append = T); //writes to Desktop
+		log.addGeneration();
+		log.addCustomColumn(columnName = "genSinceContact", source = "genSinceContact;");
+		for (subpop in sim.subpopulations) {
+			log.addSubpopulationSize(subpop);
+		}
+		log.logRow();
+	
+	}
+}
+
