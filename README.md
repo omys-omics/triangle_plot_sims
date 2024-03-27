@@ -1,8 +1,8 @@
-## triangle_plot_sims
+# triangle_plot_sims
 Code and data for simulating hybrid zones and analyzing triangle plots
 
-# R package:
+## R package:
 https://github.com/omys-omics/triangulaR
 
-# Publication:
+## Publication:
 forthcoming
