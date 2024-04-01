@@ -4,5 +4,5 @@ Code and data for simulating hybrid zones and analyzing triangle plots
 ## R package:
 https://github.com/omys-omics/triangulaR
 
-## Publication:
-forthcoming
+## Preprint:
+https://www.biorxiv.org/content/10.1101/2024.03.28.587167v1
